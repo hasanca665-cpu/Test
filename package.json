@@ -1,11 +1,11 @@
 {
   "name": "whatsapp-checker-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Number Checker Bot",
+  "description": "WhatsApp Number Checker Telegram Bot with User Management",
   "main": "checker1_fast_fixed.js",
   "scripts": {
     "start": "node checker1_fast_fixed.js",
-    "build": "echo 'Building...'"
+    "build": "npm install"
   },
   "dependencies": {
     "telegraf": "^4.12.2",
@@ -15,5 +15,13 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "telegram",
+    "number-checker"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
