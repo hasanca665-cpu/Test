@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp-checker-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Number Checker Bot",
+  "main": "checker1_fast_fixed.js",
+  "scripts": {
+    "start": "node checker1_fast_fixed.js",
+    "build": "echo 'Building...'"
+  },
+  "dependencies": {
+    "telegraf": "^4.12.2",
+    "@whiskeysockets/baileys": "^6.4.0",
+    "qrcode": "^1.5.3",
+    "pino": "^8.15.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
