@@ -1,19 +1,4 @@
-// checker1_fast_fixed.js — ultra-fast, auto-connect, both Fresh & Lal Baba visible + User Management
-
-// For Render.com deployment
-const PORT = process.env.PORT || 3000;
-
-// Start a simple HTTP server for Render health checks
-const http = require('http');
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('🤖 WhatsApp Checker Bot is Running!\n');
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
-
+// checker1_fast_fixed.js - Complete Ready to Run Code
 const { Telegraf } = require('telegraf');
 const {
   makeWASocket,
@@ -27,9 +12,21 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 
-const BOT_TOKEN = '7390288812:AAGsGZriy4dprHYmQoRUZltMCmvTUitpz4I';
-const ADMIN_ID = 5624278091;
+// For Render.com health checks
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('🤖 WhatsApp Checker Bot is Running!\n');
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
+
+const BOT_TOKEN = process.env.BOT_TOKEN || '7390288812:AAGsGZriy4dprHYmQoRUZltMCmvTUitpz4I';
+const ADMIN_ID = parseInt(process.env.ADMIN_ID) || 5624278091;
 const AUTH_FOLDER = 'auth_info';
 const CONCURRENCY = 100;
 const USER_DATA_FILE = 'users.json';
@@ -41,7 +38,7 @@ let qrTimeout = null;
 // User management system
 let allowedUsers = new Set();
 let pendingUsers = new Set();
-let userNames = new Map(); // Store user names for display
+let userNames = new Map();
 
 // Load users from file
 function loadUsers() {
@@ -53,7 +50,7 @@ function loadUsers() {
       pendingUsers = new Set(users.pendingUsers || []);
       userNames = new Map(users.userNames || []);
     } else {
-      allowedUsers = new Set([ADMIN_ID]); // Always include admin
+      allowedUsers = new Set([ADMIN_ID]);
     }
   } catch (error) {
     console.error('Error loading users:', error);
@@ -63,7 +60,6 @@ function loadUsers() {
   }
 }
 
-// Save users to file
 function saveUsers() {
   try {
     const data = {
@@ -77,21 +73,18 @@ function saveUsers() {
   }
 }
 
-// Initialize users
-loadUsers();
-
-// Store user name
 function storeUserName(userId, name) {
   userNames.set(userId, name);
   saveUsers();
 }
 
-// Check if user is allowed
 function isUserAllowed(userId) {
   return allowedUsers.has(userId);
 }
 
-// ----------------- WhatsApp Connection -----------------
+loadUsers();
+
+// WhatsApp Connection
 async function getBaileysVersionSafe() {
   try {
     const { version } = await fetchLatestBaileysVersion();
@@ -130,8 +123,12 @@ async function createWhatsAppConnection(ctx = null) {
 
       if (qr) {
         if (ctx) {
-          const qrImage = await QRCode.toBuffer(qr, { width: 350 });
-          await ctx.replyWithPhoto({ source: qrImage }, { caption: '📲 Scan QR to link WhatsApp' });
+          try {
+            const qrImage = await QRCode.toBuffer(qr, { width: 350 });
+            await ctx.replyWithPhoto({ source: qrImage }, { caption: '📲 Scan QR to link WhatsApp\n\n⏰ QR expires in 90 seconds' });
+          } catch (error) {
+            await ctx.reply(`📲 QR Code: ${qr}\n\n⏰ QR expires in 90 seconds`);
+          }
         }
         qrTimeout = setTimeout(() => {
           if (!isConnected) {
@@ -145,7 +142,9 @@ async function createWhatsAppConnection(ctx = null) {
         isConnected = true;
         if (qrTimeout) clearTimeout(qrTimeout);
         console.log('✅ WhatsApp connected!');
-        ctx?.reply('✅ WhatsApp connected! Send numbers to check.');
+        if (ctx) {
+          await ctx.reply('✅ WhatsApp connected! Now you can send numbers to check.');
+        }
       }
 
       if (connection === 'close') {
@@ -153,31 +152,40 @@ async function createWhatsAppConnection(ctx = null) {
         isConnected = false;
         sock = null;
         if (reason === DisconnectReason.loggedOut) {
-          ctx?.reply('❌ Logged out. Send /connect again.');
-          fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+          if (ctx) {
+            await ctx.reply('❌ Logged out from WhatsApp. Send /connect again.');
+          }
+          try {
+            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+          } catch (error) {
+            console.error('Error removing auth folder:', error);
+          }
         } else {
-          console.log('🔁 Reconnecting...');
-          await createWhatsAppConnection();
+          console.log('🔁 Reconnecting WhatsApp...');
+          await delay(5000);
+          await createWhatsAppConnection(ctx);
         }
       }
     });
   } catch (e) {
     console.error('Connection error:', e);
-    ctx?.reply('❌ Failed to connect WhatsApp');
+    if (ctx) {
+      await ctx.reply('❌ Failed to connect WhatsApp. Please try /connect again.');
+    }
   }
 }
 
-// auto reconnect if auth exists
+// Auto reconnect if auth exists
 (async () => {
   if (fs.existsSync(AUTH_FOLDER)) {
-    console.log('🔄 Auth found → auto connect...');
+    console.log('🔄 Auth found → auto connecting WhatsApp...');
     await createWhatsAppConnection();
   } else {
     console.log('ℹ️ No auth found. Use /connect first time.');
   }
 })();
 
-// ----------------- Telegram -----------------
+// Telegram Bot
 const bot = new Telegraf(BOT_TOKEN);
 
 // Middleware to check user access and store names
@@ -203,29 +211,33 @@ bot.use(async (ctx, next) => {
   // Check if user is allowed
   if (!isUserAllowed(userId)) {
     if (ctx.message) {
-      await ctx.reply('❌ You are not authorized to use this bot. Wait for admin approval.');
+      await ctx.reply('❌ You are not authorized to use this bot. Please wait for admin approval.');
       
       // Add to pending and notify admin if not already pending
       if (!pendingUsers.has(userId)) {
         pendingUsers.add(userId);
         saveUsers();
         
-        const userInfo = `🆕 New user request:\nID: ${userId}\nName: ${userName}\nUsername: @${ctx.from.username || 'N/A'}`;
+        const userInfo = `🆕 New User Request:\n\n👤 Name: ${userName}\n🆔 ID: ${userId}\n📱 Username: @${ctx.from.username || 'N/A'}`;
         
-        await bot.telegram.sendMessage(
-          ADMIN_ID, 
-          userInfo,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '✅ Allow', callback_data: `allow_${userId}` },
-                  { text: '❌ Deny', callback_data: `deny_${userId}` }
+        try {
+          await bot.telegram.sendMessage(
+            ADMIN_ID, 
+            userInfo,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '✅ Allow User', callback_data: `allow_${userId}` },
+                    { text: '❌ Deny User', callback_data: `deny_${userId}` }
+                  ]
                 ]
-              ]
+              }
             }
-          }
-        );
+          );
+        } catch (error) {
+          console.error('Error notifying admin:', error);
+        }
       }
     }
     return;
@@ -254,7 +266,7 @@ bot.on('callback_query', async (ctx) => {
     
     // Notify the user
     try {
-      await bot.telegram.sendMessage(userId, '🎉 Your access has been approved! You can now use the bot.');
+      await bot.telegram.sendMessage(userId, '🎉 Your access has been approved by admin! You can now use the bot.\n\nSend /connect to link WhatsApp and then send numbers to check.');
     } catch (error) {
       console.error('Could not notify user:', error);
     }
@@ -312,20 +324,34 @@ bot.start(async (ctx) => {
   
   if (userId === ADMIN_ID) {
     await ctx.reply(
-      '👋 Welcome Admin!\n\n' +
-      'Available commands:\n' +
-      '/connect - Link WhatsApp\n' +
-      '/users - Manage users\n' +
-      '/pending - Show pending requests\n' +
-      '/stats - Show bot statistics'
+      `👋 Welcome Admin ${userName}!\n\n` +
+      `📋 Available Commands:\n` +
+      `/connect - Link WhatsApp\n` +
+      `/users - Manage users\n` +
+      `/pending - Show pending requests\n` +
+      `/stats - Show bot statistics\n` +
+      `/status - Check bot status\n\n` +
+      `🔧 Simply send numbers to check after connecting WhatsApp.`
     );
   } else if (isUserAllowed(userId)) {
     await ctx.reply(
-      '👋 Welcome! Send /connect to link WhatsApp (first time only). After that just run bot and send numbers.'
+      `👋 Welcome ${userName}!\n\n` +
+      `📝 How to use:\n` +
+      `1. Send /connect to link WhatsApp (first time only)\n` +
+      `2. After connection, send numbers to check\n` +
+      `3. You can send multiple numbers at once\n\n` +
+      `📞 Supported formats:\n` +
+      `7828124894\n` +
+      `+18257976152\n` +
+      `+1 (902) 912-2670\n` +
+      `8257862503, 8733638775`
     );
   } else {
     await ctx.reply(
-      '👋 Welcome! Your access request has been sent to admin. Please wait for approval.'
+      `👋 Welcome ${userName}!\n\n` +
+      `📨 Your access request has been sent to admin.\n` +
+      `Please wait for approval. You will be notified when approved.\n\n` +
+      `⏳ Status: Waiting for admin approval...`
     );
     
     // Add to pending and notify admin if not already pending
@@ -334,33 +360,40 @@ bot.start(async (ctx) => {
       storeUserName(userId, userName);
       saveUsers();
       
-      const userInfo = `🆕 New user request:\nID: ${userId}\nName: ${userName}\nUsername: @${ctx.from.username || 'N/A'}`;
+      const userInfo = `🆕 New User Request:\n\n👤 Name: ${userName}\n🆔 ID: ${userId}\n📱 Username: @${ctx.from.username || 'N/A'}`;
       
-      await bot.telegram.sendMessage(
-        ADMIN_ID, 
-        userInfo,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Allow', callback_data: `allow_${userId}` },
-                { text: '❌ Deny', callback_data: `deny_${userId}` }
+      try {
+        await bot.telegram.sendMessage(
+          ADMIN_ID, 
+          userInfo,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ Allow User', callback_data: `allow_${userId}` },
+                  { text: '❌ Deny User', callback_data: `deny_${userId}` }
+                ]
               ]
-            ]
+            }
           }
-        }
-      );
+        );
+      } catch (error) {
+        console.error('Error notifying admin:', error);
+      }
     }
   }
 });
 
 bot.command('connect', async (ctx) => {
   if (!isUserAllowed(ctx.from.id) && ctx.from.id !== ADMIN_ID) {
-    return ctx.reply('❌ You are not authorized to use this bot.');
+    return ctx.reply('❌ You are not authorized to use this bot. Wait for admin approval.');
   }
   
-  if (isConnected) return ctx.reply('✅ Already connected!');
-  await ctx.reply('🔄 Connecting WhatsApp...');
+  if (isConnected) {
+    return ctx.reply('✅ WhatsApp is already connected! You can send numbers to check now.');
+  }
+  
+  await ctx.reply('🔄 Connecting to WhatsApp... Please wait.');
   await createWhatsAppConnection(ctx);
 });
 
@@ -370,7 +403,6 @@ bot.command('users', async (ctx) => {
     return ctx.reply('❌ Admin only command!');
   }
   
-  const allUsers = Array.from(new Set([...allowedUsers, ...pendingUsers]));
   const allowedList = Array.from(allowedUsers).filter(id => id !== ADMIN_ID);
   const pendingList = Array.from(pendingUsers);
 
@@ -384,7 +416,7 @@ bot.command('users', async (ctx) => {
     message += `✅ Allowed Users (${allowedList.length}):\n`;
     allowedList.forEach(userId => {
       const userName = userNames.get(userId) || `User ${userId}`;
-      message += `• ${userName} (${userId})\n`;
+      message += `• ${userName} (ID: ${userId})\n`;
     });
     message += `\n`;
   }
@@ -393,7 +425,7 @@ bot.command('users', async (ctx) => {
     message += `⏳ Pending Requests (${pendingList.length}):\n`;
     pendingList.forEach(userId => {
       const userName = userNames.get(userId) || `User ${userId}`;
-      message += `• ${userName} (${userId})\n`;
+      message += `• ${userName} (ID: ${userId})\n`;
     });
   }
 
@@ -405,7 +437,7 @@ bot.command('users', async (ctx) => {
     const userName = userNames.get(userId) || `User ${userId}`;
     keyboard.push([
       { 
-        text: `❌ ${userName}`, 
+        text: `❌ Disable ${userName}`, 
         callback_data: `toggle_${userId}` 
       }
     ]);
@@ -443,8 +475,7 @@ bot.command('pending', async (ctx) => {
 
   for (const userId of pendingList) {
     const userName = userNames.get(userId) || `User ${userId}`;
-    const username = await getUsername(userId) || 'No username';
-    message += `👤 ${userName}\n📱 ${username}\n🆔 ${userId}\n\n`;
+    message += `👤 ${userName}\n🆔 ${userId}\n\n`;
     
     keyboard.push([
       { text: `✅ Allow ${userName}`, callback_data: `allow_${userId}` },
@@ -459,26 +490,17 @@ bot.command('pending', async (ctx) => {
   });
 });
 
-// Helper function to get username
-async function getUsername(userId) {
-  try {
-    const user = await bot.telegram.getChat(userId);
-    return user.username ? `@${user.username}` : 'No username';
-  } catch (error) {
-    return 'No username';
-  }
-}
-
 bot.command('stats', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) {
     return ctx.reply('❌ Admin only command!');
   }
   
   const stats = {
-    totalUsers: allowedUsers.size - 1, // Exclude admin
+    totalUsers: allowedUsers.size - 1,
     pendingUsers: pendingUsers.size,
     whatsappStatus: isConnected ? 'Connected' : 'Disconnected',
-    authExists: fs.existsSync(AUTH_FOLDER)
+    authExists: fs.existsSync(AUTH_FOLDER),
+    uptime: Math.floor(process.uptime() / 60) + ' minutes'
   };
   
   await ctx.reply(
@@ -486,11 +508,29 @@ bot.command('stats', async (ctx) => {
     `👥 Allowed Users: ${stats.totalUsers}\n` +
     `⏳ Pending Requests: ${stats.pendingUsers}\n` +
     `📱 WhatsApp: ${stats.whatsappStatus}\n` +
-    `🔐 Auth: ${stats.authExists ? 'Exists' : 'Not Found'}`
+    `🔐 Auth: ${stats.authExists ? 'Exists' : 'Not Found'}\n` +
+    `⏰ Uptime: ${stats.uptime}\n` +
+    `🖥️ Server: Render.com`
   );
 });
 
-// ----------------- Number Checking -----------------
+bot.command('status', async (ctx) => {
+  const statusMessage = `
+🤖 Bot Status:
+
+📱 WhatsApp: ${isConnected ? '✅ Connected' : '❌ Disconnected'}
+⏰ Uptime: ${Math.floor(process.uptime() / 60)} minutes
+💾 Memory: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB
+👥 Allowed Users: ${allowedUsers.size - 1}
+⏳ Pending Requests: ${pendingUsers.size}
+🔗 Server: Render.com
+🆔 Your ID: ${ctx.from.id}
+  `;
+  
+  await ctx.reply(statusMessage);
+});
+
+// Number checking function
 function extractNumbers(text) {
   const numbers = Array.from(
     new Set(
@@ -519,10 +559,10 @@ function extractNumbers(text) {
 
 async function checkNumbers(ctx, numbers) {
   if (!isConnected || !sock) {
-    return ctx.reply('❌ WhatsApp not connected. Send /connect first.');
+    return ctx.reply('❌ WhatsApp is not connected. Please send /connect first.');
   }
 
-  await ctx.reply(`🔍 Checking ${numbers.length} numbers...`);
+  const processingMsg = await ctx.reply(`🔍 Checking ${numbers.length} numbers...\n\n⏳ Please wait, this may take a few seconds.`);
 
   const results = [];
   for (let i = 0; i < numbers.length; i += CONCURRENCY) {
@@ -534,30 +574,50 @@ async function checkNumbers(ctx, numbers) {
         // FIXED: Always treat empty array as "Fresh"
         const exists = Array.isArray(res) && res.length > 0 && res[0]?.exists === true;
         return { num, exists };
-      } catch {
+      } catch (error) {
+        console.error(`Error checking ${num}:`, error);
         return { num, exists: null };
       }
     });
     const settled = await Promise.all(promises);
     results.push(...settled);
+    
+    // Small delay between chunks to avoid rate limiting
+    if (i + CONCURRENCY < numbers.length) {
+      await delay(1000);
+    }
   }
 
   const lalBaba = results.filter((r) => r.exists === true).map((r) => r.num);
   const fresh = results.filter((r) => r.exists === false).map((r) => r.num);
   const errorNums = results.filter((r) => r.exists === null).map((r) => r.num);
 
-  if (lalBaba.length)
+  // Delete processing message
+  try {
+    await ctx.deleteMessage(processingMsg.message_id);
+  } catch (error) {
+    console.error('Error deleting message:', error);
+  }
+
+  // Send results
+  if (lalBaba.length > 0) {
     await ctx.reply(`🚫 Lal Baba (${lalBaba.length})\n${lalBaba.join('\n')}`);
-  else await ctx.reply('✅ No Lal Baba numbers.');
+  } else {
+    await ctx.reply('✅ No Lal Baba numbers found.');
+  }
 
-  if (fresh.length)
-    await ctx.reply(`✅ Fresh (${fresh.length})\n${fresh.join('\n')}`);
-  else await ctx.reply('ℹ️ No Fresh numbers found.');
+  if (fresh.length > 0) {
+    await ctx.reply(`✅ Fresh Numbers (${fresh.length})\n${fresh.join('\n')}`);
+  } else {
+    await ctx.reply('ℹ️ No Fresh numbers found.');
+  }
 
-  if (errorNums.length)
-    await ctx.reply(`⚠️ Failed to check ${errorNums.length} numbers.`);
+  if (errorNums.length > 0) {
+    await ctx.reply(`⚠️ Failed to check ${errorNums.length} numbers. Please try again.`);
+  }
 }
 
+// Handle text messages (number checking)
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   
@@ -565,12 +625,50 @@ bot.on('text', async (ctx) => {
   if (text.startsWith('/')) return;
   
   const nums = extractNumbers(text);
-  if (!nums.length) return ctx.reply('❌ No valid numbers found.');
+  if (nums.length === 0) {
+    return ctx.reply('❌ No valid numbers found in your message.\n\n📞 Supported formats:\n7828124894\n+18257976152\n+1 (902) 912-2670');
+  }
+  
   await checkNumbers(ctx, nums);
 });
 
-// ----------------- Launch -----------------
-bot.launch();
-console.log('🤖 Super-fast bot with user management running...');
-process.once('SIGINT', () => disconnectWA());
-process.once('SIGTERM', () => disconnectWA());
+// Start bot
+bot.launch().then(() => {
+  console.log('🤖 Bot started successfully on Render!');
+  console.log('📱 Bot is ready to receive messages');
+}).catch(err => {
+  console.error('❌ Bot failed to start:', err);
+});
+
+// Keep alive system for 24/7
+process.on('uncaughtException', (error) => {
+  console.error('🔄 Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔄 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Auto-restart WhatsApp if disconnected
+setInterval(() => {
+  if (!isConnected && fs.existsSync(AUTH_FOLDER)) {
+    console.log('🔄 Auto-reconnecting WhatsApp...');
+    createWhatsAppConnection();
+  }
+}, 30000); // 30 seconds
+
+// Status monitor
+setInterval(() => {
+  const status = {
+    whatsapp: isConnected ? '✅ Connected' : '❌ Disconnected',
+    uptime: Math.floor(process.uptime() / 60) + ' minutes',
+    memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
+    users: allowedUsers.size - 1
+  };
+  
+  console.log('📊 Status:', status);
+}, 300000); // 5 minutes
+
+console.log('🚀 WhatsApp Number Checker Bot Started!');
+console.log('💡 Send /start to begin');
+console.log('🔧 Admin ID:', ADMIN_ID);
