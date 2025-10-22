@@ -1,4 +1,4 @@
-// checker1_fast_fixed.js - Complete Ready to Run Code
+// checker1_fast_fixed.js - Fixed WhatsApp Reconnect Issue
 const { Telegraf } = require('telegraf');
 const {
   makeWASocket,
@@ -34,6 +34,7 @@ const USER_DATA_FILE = 'users.json';
 let sock = null;
 let isConnected = false;
 let qrTimeout = null;
+let reconnectCount = 0;
 
 // User management system
 let allowedUsers = new Set();
@@ -84,7 +85,7 @@ function isUserAllowed(userId) {
 
 loadUsers();
 
-// WhatsApp Connection
+// WhatsApp Connection - SIMPLE FIXED VERSION
 async function getBaileysVersionSafe() {
   try {
     const { version } = await fetchLatestBaileysVersion();
@@ -96,16 +97,23 @@ async function getBaileysVersionSafe() {
 
 async function disconnectWA() {
   if (sock) {
-    try { await sock.ws.close(); } catch {}
+    try { 
+      await sock.ws.close(); 
+      sock = null;
+    } catch {}
   }
-  sock = null;
   isConnected = false;
   if (qrTimeout) clearTimeout(qrTimeout);
 }
 
 async function createWhatsAppConnection(ctx = null) {
   try {
-    const authExists = fs.existsSync(AUTH_FOLDER);
+    // If already connected, don't reconnect
+    if (isConnected && sock) {
+      if (ctx) await ctx.reply('✅ WhatsApp is already connected!');
+      return;
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
     const version = await getBaileysVersionSafe();
 
@@ -125,9 +133,9 @@ async function createWhatsAppConnection(ctx = null) {
         if (ctx) {
           try {
             const qrImage = await QRCode.toBuffer(qr, { width: 350 });
-            await ctx.replyWithPhoto({ source: qrImage }, { caption: '📲 Scan QR to link WhatsApp\n\n⏰ QR expires in 90 seconds' });
+            await ctx.replyWithPhoto({ source: qrImage }, { caption: '📲 Scan QR to link WhatsApp' });
           } catch (error) {
-            await ctx.reply(`📲 QR Code: ${qr}\n\n⏰ QR expires in 90 seconds`);
+            await ctx.reply(`📲 QR Code: ${qr}`);
           }
         }
         qrTimeout = setTimeout(() => {
@@ -140,6 +148,7 @@ async function createWhatsAppConnection(ctx = null) {
 
       if (connection === 'open') {
         isConnected = true;
+        reconnectCount = 0;
         if (qrTimeout) clearTimeout(qrTimeout);
         console.log('✅ WhatsApp connected!');
         if (ctx) {
@@ -148,37 +157,42 @@ async function createWhatsAppConnection(ctx = null) {
       }
 
       if (connection === 'close') {
-        const reason = lastDisconnect?.error?.output?.statusCode;
         isConnected = false;
-        sock = null;
+        const reason = lastDisconnect?.error?.output?.statusCode;
+        
         if (reason === DisconnectReason.loggedOut) {
-          if (ctx) {
-            await ctx.reply('❌ Logged out from WhatsApp. Send /connect again.');
-          }
+          if (ctx) await ctx.reply('❌ Logged out from WhatsApp. Send /connect again.');
           try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-          } catch (error) {
-            console.error('Error removing auth folder:', error);
-          }
-        } else {
-          console.log('🔁 Reconnecting WhatsApp...');
-          await delay(5000);
+          } catch (error) {}
+          sock = null;
+          return;
+        }
+        
+        // Simple reconnect logic - wait 10 seconds then try once
+        if (reconnectCount < 3) {
+          reconnectCount++;
+          console.log(`🔁 Reconnecting... Attempt ${reconnectCount}`);
+          await delay(10000);
           await createWhatsAppConnection(ctx);
+        } else {
+          console.log('❌ Max reconnection attempts reached');
+          sock = null;
         }
       }
     });
   } catch (e) {
     console.error('Connection error:', e);
-    if (ctx) {
-      await ctx.reply('❌ Failed to connect WhatsApp. Please try /connect again.');
-    }
+    if (ctx) await ctx.reply('❌ Failed to connect WhatsApp. Please try /connect again.');
+    isConnected = false;
+    sock = null;
   }
 }
 
-// Auto reconnect if auth exists
+// Auto reconnect if auth exists - ONLY ONCE
 (async () => {
   if (fs.existsSync(AUTH_FOLDER)) {
-    console.log('🔄 Auth found → auto connecting WhatsApp...');
+    console.log('🔄 Auth found → connecting WhatsApp...');
     await createWhatsAppConnection();
   } else {
     console.log('ℹ️ No auth found. Use /connect first time.');
@@ -193,27 +207,22 @@ bot.use(async (ctx, next) => {
   const userId = ctx.from.id;
   const userName = ctx.from.first_name || 'Unknown User';
   
-  // Store user name
   if (!userNames.has(userId)) {
     storeUserName(userId, userName);
   }
   
-  // Always allow start command
   if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/start')) {
     return next();
   }
   
-  // Always allow admin
   if (userId === ADMIN_ID) {
     return next();
   }
   
-  // Check if user is allowed
   if (!isUserAllowed(userId)) {
     if (ctx.message) {
       await ctx.reply('❌ You are not authorized to use this bot. Please wait for admin approval.');
       
-      // Add to pending and notify admin if not already pending
       if (!pendingUsers.has(userId)) {
         pendingUsers.add(userId);
         saveUsers();
@@ -235,9 +244,7 @@ bot.use(async (ctx, next) => {
               }
             }
           );
-        } catch (error) {
-          console.error('Error notifying admin:', error);
-        }
+        } catch (error) {}
       }
     }
     return;
@@ -264,12 +271,9 @@ bot.on('callback_query', async (ctx) => {
     await ctx.answerCbQuery('✅ User allowed!');
     await ctx.editMessageText(`✅ User ${userNames.get(userId) || userId} has been allowed to use the bot.`);
     
-    // Notify the user
     try {
       await bot.telegram.sendMessage(userId, '🎉 Your access has been approved by admin! You can now use the bot.\n\nSend /connect to link WhatsApp and then send numbers to check.');
-    } catch (error) {
-      console.error('Could not notify user:', error);
-    }
+    } catch (error) {}
     
   } else if (callbackData.startsWith('deny_')) {
     const userId = parseInt(callbackData.split('_')[1]);
@@ -280,12 +284,9 @@ bot.on('callback_query', async (ctx) => {
     await ctx.answerCbQuery('❌ User denied!');
     await ctx.editMessageText(`❌ User ${userNames.get(userId) || userId} has been denied access.`);
     
-    // Notify the user
     try {
       await bot.telegram.sendMessage(userId, '❌ Your access request has been denied by admin.');
-    } catch (error) {
-      console.error('Could not notify user:', error);
-    }
+    } catch (error) {}
   } else if (callbackData.startsWith('toggle_')) {
     const userId = parseInt(callbackData.split('_')[1]);
     const userName = userNames.get(userId) || `User ${userId}`;
@@ -295,24 +296,18 @@ bot.on('callback_query', async (ctx) => {
       await ctx.answerCbQuery('❌ User access removed!');
       await ctx.editMessageText(`❌ ${userName}'s access has been disabled.`);
       
-      // Notify the user
       try {
         await bot.telegram.sendMessage(userId, '❌ Your access to the bot has been disabled by admin.');
-      } catch (error) {
-        console.error('Could not notify user:', error);
-      }
+      } catch (error) {}
     } else {
       allowedUsers.add(userId);
       pendingUsers.delete(userId);
       await ctx.answerCbQuery('✅ User access granted!');
       await ctx.editMessageText(`✅ ${userName}'s access has been enabled.`);
       
-      // Notify the user
       try {
         await bot.telegram.sendMessage(userId, '🎉 Your access to the bot has been enabled by admin.');
-      } catch (error) {
-        console.error('Could not notify user:', error);
-      }
+      } catch (error) {}
     }
     saveUsers();
   }
@@ -354,7 +349,6 @@ bot.start(async (ctx) => {
       `⏳ Status: Waiting for admin approval...`
     );
     
-    // Add to pending and notify admin if not already pending
     if (!pendingUsers.has(userId)) {
       pendingUsers.add(userId);
       storeUserName(userId, userName);
@@ -377,9 +371,7 @@ bot.start(async (ctx) => {
             }
           }
         );
-      } catch (error) {
-        console.error('Error notifying admin:', error);
-      }
+      } catch (error) {}
     }
   }
 });
@@ -429,10 +421,8 @@ bot.command('users', async (ctx) => {
     });
   }
 
-  // Create keyboard with toggle buttons for all users
   const keyboard = [];
   
-  // Allowed users toggle buttons
   allowedList.forEach(userId => {
     const userName = userNames.get(userId) || `User ${userId}`;
     keyboard.push([
@@ -443,7 +433,6 @@ bot.command('users', async (ctx) => {
     ]);
   });
   
-  // Pending users action buttons
   pendingList.forEach(userId => {
     const userName = userNames.get(userId) || `User ${userId}`;
     keyboard.push([
@@ -535,18 +524,14 @@ function extractNumbers(text) {
   const numbers = Array.from(
     new Set(
       (text.match(/[\+]?[1]?[-\s\.]?[(]?(\d{3})[)]?[-\s\.]?(\d{3})[-\s\.]?(\d{4})|\d{10,15}/g) || []).map((n) => {
-        // Remove all non-digit characters first
         const cleanDigits = n.replace(/\D/g, '');
         
-        // If number is 10 digits, add +1 (US/Canada)
         if (cleanDigits.length === 10) {
           return '+1' + cleanDigits;
         }
-        // If number is 11 digits and starts with 1, add +
         else if (cleanDigits.length === 11 && cleanDigits.startsWith('1')) {
           return '+' + cleanDigits;
         }
-        // For other lengths, just add +
         else {
           return '+' + cleanDigits;
         }
@@ -554,7 +539,7 @@ function extractNumbers(text) {
     )
   );
   
-  return numbers.filter(n => n.length >= 12); // Filter valid numbers (at least +1XXXXXXXXXX)
+  return numbers.filter(n => n.length >= 12);
 }
 
 async function checkNumbers(ctx, numbers) {
@@ -571,18 +556,15 @@ async function checkNumbers(ctx, numbers) {
       try {
         const clean = num.replace(/\D/g, '');
         const res = await sock.onWhatsApp(clean);
-        // FIXED: Always treat empty array as "Fresh"
         const exists = Array.isArray(res) && res.length > 0 && res[0]?.exists === true;
         return { num, exists };
       } catch (error) {
-        console.error(`Error checking ${num}:`, error);
         return { num, exists: null };
       }
     });
     const settled = await Promise.all(promises);
     results.push(...settled);
     
-    // Small delay between chunks to avoid rate limiting
     if (i + CONCURRENCY < numbers.length) {
       await delay(1000);
     }
@@ -592,14 +574,10 @@ async function checkNumbers(ctx, numbers) {
   const fresh = results.filter((r) => r.exists === false).map((r) => r.num);
   const errorNums = results.filter((r) => r.exists === null).map((r) => r.num);
 
-  // Delete processing message
   try {
     await ctx.deleteMessage(processingMsg.message_id);
-  } catch (error) {
-    console.error('Error deleting message:', error);
-  }
+  } catch (error) {}
 
-  // Send results
   if (lalBaba.length > 0) {
     await ctx.reply(`🚫 Lal Baba (${lalBaba.length})\n${lalBaba.join('\n')}`);
   } else {
@@ -621,7 +599,6 @@ async function checkNumbers(ctx, numbers) {
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   
-  // Ignore commands
   if (text.startsWith('/')) return;
   
   const nums = extractNumbers(text);
@@ -640,34 +617,22 @@ bot.launch().then(() => {
   console.error('❌ Bot failed to start:', err);
 });
 
-// Keep alive system for 24/7
+// Simple keep alive
 process.on('uncaughtException', (error) => {
-  console.error('🔄 Uncaught Exception:', error);
+  console.error('Uncaught Exception:', error);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('🔄 Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// Auto-restart WhatsApp if disconnected
+// Simple auto-reconnect - only every 5 minutes
 setInterval(() => {
   if (!isConnected && fs.existsSync(AUTH_FOLDER)) {
-    console.log('🔄 Auto-reconnecting WhatsApp...');
+    console.log('🔄 Checking WhatsApp connection...');
     createWhatsAppConnection();
   }
-}, 30000); // 30 seconds
-
-// Status monitor
-setInterval(() => {
-  const status = {
-    whatsapp: isConnected ? '✅ Connected' : '❌ Disconnected',
-    uptime: Math.floor(process.uptime() / 60) + ' minutes',
-    memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
-    users: allowedUsers.size - 1
-  };
-  
-  console.log('📊 Status:', status);
-}, 300000); // 5 minutes
+}, 5 * 60 * 1000); // 5 minutes
 
 console.log('🚀 WhatsApp Number Checker Bot Started!');
 console.log('💡 Send /start to begin');
