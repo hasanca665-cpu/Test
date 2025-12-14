@@ -25,7 +25,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
-const BOT_TOKEN = process.env.BOT_TOKEN || '6696317970:AAGqWt9H5lFir-YdeMWTU15cbVEIsA0qtNM';
+const BOT_TOKEN = process.env.BOT_TOKEN || '7028850279:AAFSlSqSlTaCD_Vi9vLzxxUu94pjCeKpavk';
 const ADMIN_ID = parseInt(process.env.ADMIN_ID) || 5624278091;
 const AUTH_FOLDER = 'auth_info';
 const USER_DATA_FILE = 'users.json';
