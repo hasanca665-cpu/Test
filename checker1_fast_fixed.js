@@ -692,62 +692,7 @@ setTimeout(async () => {
   await pingServer();
 }, 15000);
 
-// checker1_fast_fixed.js এর শেষে এই কোড add করো:
 
-const express = require('express');
-const apiApp = express();
-apiApp.use(express.json());
-
-// WhatsApp number check API
-apiApp.post('/api/check-whatsapp', async (req, res) => {
-  try {
-    const { numbers } = req.body;
-    
-    if (!numbers || !Array.isArray(numbers)) {
-      return res.status(400).json({ error: 'Numbers array required' });
-    }
-    
-    if (!isConnected || !sock) {
-      return res.status(503).json({ error: 'WhatsApp not connected' });
-    }
-    
-    // Limit to 50 numbers per request
-    const numbersToCheck = numbers.slice(0, 50);
-    const results = [];
-    
-    // Check each number
-    for (const num of numbersToCheck) {
-      try {
-        const clean = num.replace(/\D/g, '');
-        const res = await sock.onWhatsApp(clean);
-        const exists = Array.isArray(res) && res.length > 0 && res[0]?.exists === true;
-        results.push({ number: num, whatsapp: exists });
-      } catch (error) {
-        results.push({ number: num, whatsapp: false, error: error.message });
-      }
-    }
-    
-    res.json({ success: true, results });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Health check endpoint
-apiApp.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    whatsapp: isConnected,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Start API server on different port
-const API_PORT = process.env.API_PORT || 3001;
-apiApp.listen(API_PORT, () => {
-  console.log(`🔌 WhatsApp API running on port ${API_PORT}`);
-});
 
 
 console.log('🚀 WhatsApp Number Checker Bot Started!');
